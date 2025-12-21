@@ -20,6 +20,10 @@ from chatchat.server.db.repository.knowledge_file_repository import (
 from chatchat.server.db.repository.knowledge_metadata_repository import (
     add_summary_to_db,
 )
+# ensure Models are imported
+from chatchat.server.db.repository.mcp_connection_repository import (
+    create_mcp_profile,
+)
 from chatchat.server.db.session import session_scope
 from chatchat.server.knowledge_base.kb_service.base import (
     KBServiceFactory,
@@ -206,7 +210,6 @@ def folder2db(
             )
         )
         print("-" * 100 + "\n")
-        return result
 
 
 def prune_db_docs(kb_names: List[str]):

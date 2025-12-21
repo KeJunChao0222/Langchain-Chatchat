@@ -5,6 +5,8 @@ from pathlib import Path
 import sys
 import typing as t
 
+import nltk
+
 from chatchat import __version__
 from chatchat.pydantic_settings_file import *
 
@@ -23,7 +25,8 @@ XF_MODELS_TYPES = {
 class BasicSettings(BaseFileSettings):
     """
     服务器基本配置信息
-    除 log_verbose/HTTPX_DEFAULT_TIMEOUT 修改后即时生效，其它配置项修改后都需要重启服务器才能生效
+    除 log_verbose/HTTPX_DEFAULT_TIMEOUT 修改后即时生效
+    其它配置项修改后都需要重启服务器才能生效，服务运行期间请勿修改
     """
 
     model_config = SettingsConfigDict(yaml_file=CHATCHAT_ROOT / "basic_settings.yaml")
@@ -33,9 +36,6 @@ class BasicSettings(BaseFileSettings):
 
     log_verbose: bool = False
     """是否开启日志详细信息"""
-
-    LOG_FORMAT: str = "%(asctime)s - %(filename)s[line:%(lineno)d] - %(levelname)s: %(message)s"
-    """日志格式"""
 
     HTTPX_DEFAULT_TIMEOUT: float = 300
     """httpx 请求默认超时时间（秒）。如果加载模型或对话较慢，出现超时错误，可以适当加大该值。"""
@@ -64,7 +64,7 @@ class BasicSettings(BaseFileSettings):
     @cached_property
     def NLTK_DATA_PATH(self) -> Path:
         """nltk 模型存储路径"""
-        p = self.DATA_PATH / "nltk_data"
+        p = self.PACKAGE_ROOT / "data/nltk_data"
         return p
 
     # @computed_field
@@ -101,14 +101,14 @@ class BasicSettings(BaseFileSettings):
     OPEN_CROSS_DOMAIN: bool = False
     """API 是否开启跨域"""
 
-    DEFAULT_BIND_HOST: str = "127.0.0.1" if sys.platform != "win32" else "127.0.0.1"
+    DEFAULT_BIND_HOST: str = "0.0.0.0" if sys.platform != "win32" else "127.0.0.1"
     """
     各服务器默认绑定host。如改为"0.0.0.0"需要修改下方所有XX_SERVER的host
     Windows 下 WEBUI 自动弹出浏览器时，如果地址为 "0.0.0.0" 是无法访问的，需要手动修改地址栏
     """
 
-    API_SERVER: dict = {"host": DEFAULT_BIND_HOST, "port": 7861}
-    """API 服务器地址"""
+    API_SERVER: dict = {"host": DEFAULT_BIND_HOST, "port": 7861, "public_host": "127.0.0.1", "public_port": 7861}
+    """API 服务器地址。其中 public_host 用于生成云服务公网访问链接（如知识库文档链接）"""
 
     WEBUI_SERVER: dict = {"host": DEFAULT_BIND_HOST, "port": 8501}
     """WEBUI 服务器地址"""
@@ -117,7 +117,6 @@ class BasicSettings(BaseFileSettings):
         '''创建所有数据目录'''
         for p in [
             self.DATA_PATH,
-            self.NLTK_DATA_PATH,
             self.MEDIA_PATH,
             self.LOG_PATH,
             self.BASE_TEMP_DIR,
@@ -198,11 +197,16 @@ class KBSettings(BaseFileSettings):
                 "connection_uri": "postgresql+psycopg2://postgres:postgres@127.0.0.1:7000/langchain_chatchat"
             },
             "es": {
+                "scheme": "http",
                 "host": "127.0.0.1",
                 "port": "9200",
                 "index_name": "test_index",
                 "user": "",
-                "password": ""
+                "password": "",
+                "verify_certs": True,
+                "ca_certs": None,
+                "client_cert": None,
+                "client_key": None
             },
             "milvus_kwargs": {
                 "search_params": {
@@ -266,24 +270,19 @@ class PlatformConfig(MyBaseModel):
     api_key: str = "EMPTY"
     """api key if available"""
 
+    api_proxy: str = ""
+    """API 代理"""
+
     api_concurrencies: int = 5
     """该平台单模型最大并发数"""
 
     auto_detect_model: bool = False
     """是否自动获取平台可用模型列表。设为 True 时下方不同模型类型可自动检测"""
 
-    llm_models: t.Union[t.Literal["auto"], t.List[str]] = [
-        "glm4-chat",
-        "qwen1.5-chat",
-        "qwen2-instruct",
-        "gpt-3.5-turbo",
-        "gpt-4o",
-    ]
+    llm_models: t.Union[t.Literal["auto"], t.List[str]] = []
     """该平台支持的大语言模型列表，auto_detect_model 设为 True 时自动检测"""
 
-    embed_models: t.Union[t.Literal["auto"], t.List[str]] = [
-        "bge-large-zh-v1.5",
-    ]
+    embed_models: t.Union[t.Literal["auto"], t.List[str]] = []
     """该平台支持的嵌入模型列表，auto_detect_model 设为 True 时自动检测"""
 
     text2image_models: t.Union[t.Literal["auto"], t.List[str]] = []
@@ -314,7 +313,7 @@ class ApiModelSettings(BaseFileSettings):
     """默认选用的 Embedding 名称"""
 
     Agent_MODEL: str = "" # TODO: 似乎与 LLM_MODEL_CONFIG 重复了
-    """AgentLM模型的名称 (可以不指定，指定之后就锁定进入Agent之后的Chain的模型，不指定就是LLM_MODELS[0])"""
+    """AgentLM模型的名称 (可以不指定，指定之后就锁定进入Agent之后的Chain的模型，不指定就是 DEFAULT_LLM_MODEL)"""
 
     HISTORY_LEN: int = 3
     """默认历史对话轮数"""
@@ -382,7 +381,7 @@ class ApiModelSettings(BaseFileSettings):
 
     MODEL_PLATFORMS: t.List[PlatformConfig] = [
             PlatformConfig(**{
-                "platform_name": "xinference-auto",
+                "platform_name": "xinference",
                 "platform_type": "xinference",
                 "api_base_url": "http://127.0.0.1:9997/v1",
                 "api_key": "EMPTY",
@@ -390,26 +389,6 @@ class ApiModelSettings(BaseFileSettings):
                 "auto_detect_model": True,
                 "llm_models": [],
                 "embed_models": [],
-                "text2image_models": [],
-                "image2text_models": [],
-                "rerank_models": [],
-                "speech2text_models": [],
-                "text2speech_models": [],
-            }),
-            PlatformConfig(**{
-                "platform_name": "xinference",
-                "platform_type": "xinference",
-                "api_base_url": "http://127.0.0.1:9997/v1",
-                "api_key": "EMPTY",
-                "api_concurrencies": 5,
-                "llm_models": [
-                    "glm4-chat",
-                    "qwen1.5-chat",
-                    "qwen2-instruct",
-                ],
-                "embed_models": [
-                    "bge-large-zh-v1.5",
-                ],
                 "text2image_models": [],
                 "image2text_models": [],
                 "rerank_models": [],
@@ -523,9 +502,10 @@ class ToolSettings(BaseFileSettings):
             },
             "duckduckgo": {},
             "searx": {
-                "host": "",
+                "host": "https://metasearx.com",
                 "engines": [],
                 "categories": [],
+                "language": "zh-CN",
             }
         },
         "top_k": 5,
@@ -561,22 +541,6 @@ class ToolSettings(BaseFileSettings):
         "use": False,
     }
     '''numexpr 数学计算工具配置项'''
-
-    vqa_processor: dict = {
-        "use": False,
-        "model_path": "your model path",
-        "tokenizer_path": "your tokenizer path",
-        "device": "cuda:1",
-    }
-    '''图片对话工具配置项。该工具依赖 torch，后续将删除。现在 WEBUI 已经支持图片对话功能。'''
-
-    aqa_processor: dict = {
-        "use": False,
-        "model_path": "your model path",
-        "tokenizer_path": "yout tokenizer path",
-        "device": "cuda:2",
-    }
-    '''音频对话工具配置项。该工具依赖 torch，后续将删除。'''
 
     text2images: dict = {
         "use": False,
@@ -642,6 +606,14 @@ class ToolSettings(BaseFileSettings):
     3、当前仅支持 单prometheus 查询, 后续考虑支持 多prometheus 查询.
     '''
 
+    url_reader: dict = {
+        "use": False,
+        "timeout": "10000",
+    }
+    '''URL内容阅读（https://r.jina.ai/）工具配置项
+    请确保部署的网络环境良好，以免造成超时等问题'''
+
+
 
 class PromptSettings(BaseFileSettings):
     """Prompt 模板.除 Agent 模板使用 f-string 外，其它均使用 jinja2 格式"""
@@ -688,107 +660,281 @@ class PromptSettings(BaseFileSettings):
             "{{question}}"
         ),
     }
+    '''RAG 用模板，可用于知识库问答、文件对话、搜索引擎对话'''
 
     action_model: dict = {
-        "GPT-4": (
-            "Answer the following questions as best you can. You have access to the following tools:\n"
-            "The way you use the tools is by specifying a json blob.\n"
-            "Specifically, this json should have a `action` key (with the name of the tool to use) and a `action_input` key (with the input to the tool going here).\n"
-            'The only values that should be in the "action" field are: {tool_names}\n'
-            "The $JSON_BLOB should only contain a SINGLE action, do NOT return a list of multiple actions. Here is an example of a valid $JSON_BLOB:\n"
-            "```\n\n"
-            "{{{{\n"
-            '  "action": $TOOL_NAME,\n'
-            '  "action_input": $INPUT\n'
-            "}}}}\n"
-            "```\n\n"
-            "ALWAYS use the following format:\n"
-            "Question: the input question you must answer\n"
-            "Thought: you should always think about what to do\n"
-            "Action:\n"
-            "```\n\n"
-            "$JSON_BLOB"
-            "```\n\n"
-            "Observation: the result of the action\n"
-            "... (this Thought/Action/Observation can repeat N times)\n"
-            "Thought: I now know the final answer\n"
-            "Final Answer: the final answer to the original input question\n"
-            "Begin! Reminder to always use the exact characters `Final Answer` when responding.\n"
-            "Question:{input}\n"
-            "Thought:{agent_scratchpad}\n"
+        "default": {
+            "SYSTEM_PROMPT": (
+                "You are a helpful assistant"
             ),
-        "ChatGLM3": (
-            "You can answer using the tools.Respond to the human as helpfully and accurately as possible.\n"
-            "You have access to the following tools:\n"
-            "{tools}\n"
-            "Use a json blob to specify a tool by providing an action key (tool name)\n"
-            "and an action_input key (tool input).\n"
-            'Valid "action" values: "Final Answer" or  [{tool_names}]\n'
-            "Provide only ONE action per $JSON_BLOB, as shown:\n\n"
-            "```\n"
-            "{{{{\n"
-            '  "action": $TOOL_NAME,\n'
-            '  "action_input": $INPUT\n'
-            "}}}}\n"
-            "```\n\n"
-            "Follow this format:\n\n"
-            "Question: input question to answer\n"
-            "Thought: consider previous and subsequent steps\n"
-            "Action:\n"
-            "```\n"
-            "$JSON_BLOB\n"
-            "```\n"
-            "Observation: action result\n"
-            "... (repeat Thought/Action/Observation N times)\n"
-            "Thought: I know what to respond\n"
-            "Action:\n"
-            "```\n"
-            "{{{{\n"
-            '  "action": "Final Answer",\n'
-            '  "action_input": "Final response to human"\n'
-            "}}}}\n"
-            "Begin! Reminder to ALWAYS respond with a valid json blob of a single action. Use tools if necessary.\n"
-            "Respond directly if appropriate. Format is Action:```$JSON_BLOB```then Observation:.\n"
-            "Question: {input}\n\n"
-            "{agent_scratchpad}\n"
+        },
+        "openai-functions": {
+            "SYSTEM_PROMPT": (
+                "You are a helpful assistant"
             ),
-        "qwen": (
-            "Answer the following questions as best you can. You have access to the following APIs:\n\n"
-            "{tools}\n\n"
-            "Use the following format:\n\n"
-            "Question: the input question you must answer\n"
-            "Thought: you should always think about what to do\n"
-            "Action: the action to take, should be one of [{tool_names}]\n"
-            "Action Input: the input to the action\n"
-            "Observation: the result of the action\n"
-            "... (this Thought/Action/Action Input/Observation can be repeated zero or more times)\n"
-            "Thought: I now know the final answer\n"
-            "Final Answer: the final answer to the original input question\n\n"
-            "Format the Action Input as a JSON object.\n\n"
-            "Begin!\n\n"
-            "Question: {input}\n\n"
-            "{agent_scratchpad}\n\n"
+            "HUMAN_MESSAGE": (
+                "{input}"
+            )
+        },
+        "glm3": {
+            "SYSTEM_PROMPT": ("\nAnswer the following questions as best as you can. You have access to the following "
+                              "tools:\n{tools}"),
+            "HUMAN_MESSAGE": "Let's start! Human:{input}\n\n{agent_scratchpad}"
+
+        },
+        "qwen": {
+            "SYSTEM_PROMPT": (
+                "Answer the following questions as best you can. You have access to the following APIs:\n\n"
+                "{tools}\n\n"
+                "Use the following format:\n\n"
+                "Question: the input question you must answer\n"
+                "Thought: you should always think about what to do\n"
+                "Action: the action to take, should be one of [{tool_names}]\n"
+                "Action Input: the input to the action\n"
+                "Observation: the result of the action\n"
+                "... (this Thought/Action/Action Input/Observation can be repeated zero or more times)\n"
+                "Thought: I now know the final answer\n"
+                "Final Answer: the final answer to the original input question\n\n"
+                "Format the Action Input as a JSON object.\n\n"
+                "Begin!\n\n"),
+            "HUMAN_MESSAGE": (
+                "Question: {input}\n\n"
+                "{agent_scratchpad}\n\n")
+        },
+        "structured-chat-agent": {
+            "SYSTEM_PROMPT": (
+                "Respond to the human as helpfully and accurately as possible. You have access to the following tools:\n\n"
+                "{tools}\n\n"
+                "Use a json blob to specify a tool by providing an action key (tool name) and an action_input key (tool input).\n\n"
+                'Valid "action" values: "Final Answer" or {tool_names}\n\n'
+                "Provide only ONE action per $JSON_BLOB, as shown:\n\n"
+                '```\n{{\n  "action": $TOOL_NAME,\n  "action_input": $INPUT\n}}\n```\n\n'
+                "Follow this format:\n\n"
+                "Question: input question to answer\n"
+                "Thought: consider previous and subsequent steps\n"
+                "Action:\n```\n$JSON_BLOB\n```\n"
+                "Observation: action result\n"
+                "... (repeat Thought/Action/Observation N times)\n"
+                "Thought: I know what to respond\n"
+                'Action:\n```\n{{\n  "action": "Final Answer",\n  "action_input": "Final response to human"\n}}\n\n'
+                "Begin! Reminder to ALWAYS respond with a valid json blob of a single action. Use tools if necessary. Respond directly if appropriate. Format is Action:```$JSON_BLOB```then Observation\n"
             ),
-        "structured-chat-agent": (
-            "Respond to the human as helpfully and accurately as possible. You have access to the following tools:\n\n"
-            "{tools}\n\n"
-            "Use a json blob to specify a tool by providing an action key (tool name) and an action_input key (tool input).\n\n"
-            'Valid "action" values: "Final Answer" or {tool_names}\n\n'
-            "Provide only ONE action per $JSON_BLOB, as shown:\n\n"
-            '```\n{{\n  "action": $TOOL_NAME,\n  "action_input": $INPUT\n}}\n```\n\n'
-            "Follow this format:\n\n"
-            "Question: input question to answer\n"
-            "Thought: consider previous and subsequent steps\n"
-            "Action:\n```\n$JSON_BLOB\n```\n"
-            "Observation: action result\n"
-            "... (repeat Thought/Action/Observation N times)\n"
-            "Thought: I know what to respond\n"
-            'Action:\n```\n{{\n  "action": "Final Answer",\n  "action_input": "Final response to human"\n}}\n\n'
-            "Begin! Reminder to ALWAYS respond with a valid json blob of a single action. Use tools if necessary. Respond directly if appropriate. Format is Action:```$JSON_BLOB```then Observation\n"
-            "{input}\n\n"
-            "{agent_scratchpad}\n\n"
+            "HUMAN_MESSAGE": (
+                "{input}\n\n"
+                "{agent_scratchpad}\n\n"
+            )
             # '(reminder to respond in a JSON blob no matter what)')
+        },
+        "platform-agent": {
+            "SYSTEM_PROMPT": (
+                "You are a helpful assistant"
             ),
+            "HUMAN_MESSAGE": (
+                "{input}\n\n"
+            )
+        },
+        "platform-knowledge-mode": {
+            "SYSTEM_PROMPT": (
+                "</think>You are ChatChat,  a content manager, you are familiar with how to find data from complex projects and better respond to users\n"
+                "\n"
+                "\n"
+                "CRITICAL: TOOL RULES: All tool usage MUST ` Tool Use Formatting` the specified structured format. \n"
+                "CRITICAL: THINKING RULES: In <thinking> tags, assess what information you already have and what information you need to proceed with the task. Include detailed output description text within <thinking> tags and always specify the `TOOL USE` next action to take.\n"
+                "CRITICAL: MCP TOOL RULES: All MCP tool usage MUST strictly follow the Output Structure rules defined for `use_mcp_tool`. The output will always be returned within <use_mcp_tool> tags with the specified structured format.\n"
+                "IMPORTANT: This tool usage process will be repeated multiple times throughout task completion. Each and every MCP tool call MUST follow the Output Structure rules without exception. The structured format must be applied consistently across all iterations to ensure proper parsing and execution.\n"
+                "\n"
+                "====\n"
+                "\n"
+                "TOOL USE\n"
+                "You have access to a set of tools that are executed upon the user's approval. You can use one tool per message, and will receive the result of that tool use in the user's response. You use tools step-by-step to accomplish a given task, with each tool use informed by the result of the previous tool use.\n"
+                "\n"
+                "CRITICAL: MCP TOOL RULES: All MCP tool usage MUST strictly follow the Output Structure rules defined for `use_mcp_tool`. The output will always be returned within <use_mcp_tool> tags with the specified structured format.\n"
+                "IMPORTANT: This tool usage process will be repeated multiple times throughout task completion. Each and every MCP tool call MUST follow the Output Structure rules without exception. The structured format must be applied consistently across all iterations to ensure proper parsing and execution.\n"
+                "\n"
+                "# Tool Use Formatting\n"
+                "\n"
+                "CRITICAL: TOOL USE FORMATTING: Tool use is formatted using XML-style tags. The tool name is enclosed in opening and closing tags, and each parameter is similarly enclosed within its own set of tags. This format is MANDATORY for proper parsing and execution. Here's the structure:\n"
+                "\n"
+                "<tool_name>\n"
+                "<parameter1_name>value1</parameter1_name>\n"
+                "<parameter2_name>value2</parameter2_name>\n"
+                "...\n"
+                "</tool_name>\n"
+                "\n"
+                "For example:\n"
+                "\n"
+                "<read_file>\n"
+                "<path>src/main.js</path>\n"
+                "</read_file>\n"
+                "\n"
+                "\n"
+                "# Tools\n"
+                "\n" 
+                "{tools}\n"
+                "\n" 
+                "## use_mcp_tool\n"
+                "Description: Request to use a tool provided by a connected MCP server. Each MCP server can provide multiple tools with different capabilities. Tools have defined input schemas that specify required and optional parameters.\n"
+                "Parameters:\n"
+                "- server_name: (required) The name of the MCP server providing the tool\n"
+                "- tool_name: (required) The name of the tool to execute\n"
+                "- arguments: (required) A JSON object containing the tool's input parameters, following the tool's input schema\n"
+                "\n"
+                "Usage:\n"
+                "<use_mcp_tool>\n"
+                "<server_name>server name here</server_name>\n"
+                "<tool_name>tool name here</tool_name>\n"
+                "<arguments>\n"
+                "{{\n"
+                "  \"param1\": \"value1\",\n"
+                "  \"param2\": \"value2\"\n"
+                "}}\n"
+                "</arguments>\n"
+                "</use_mcp_tool>\n"
+                "\n"
+                "Output Structure:\n"
+                "The tool will return a structured response within <use_mcp_tool> tags containing:\n"
+                "<use_mcp_tool>\n"
+                "- success: boolean indicating if the tool execution succeeded\n"
+                "- result: the actual output data from the tool execution\n"
+                "- error: error message if the execution failed (null if successful)\n"
+                "- server_name: the name of the MCP server that executed the tool\n"
+                "- tool_name: the name of the tool that was executed\n"
+                "</use_mcp_tool>\n"
+                "\n"
+                "\n"
+                "## access_mcp_resource\n"
+                "Description: Request to access a resource provided by a connected MCP server. Resources represent data sources that can be used as context, such as files, API responses, or system information.\n"
+                "Parameters:\n"
+                "- server_name: (required) The name of the MCP server providing the resource\n"
+                "- uri: (required) The URI identifying the specific resource to access\n"
+                "Usage:\n"
+                "<access_mcp_resource>\n"
+                "<server_name>server name here</server_name>\n"
+                "<uri>resource URI here</uri>\n"
+                "</access_mcp_resource>\n"
+                "\n"
+                "\n"
+                "====\n"
+                "\n"
+                "# Tool Use Examples\n"
+                "\n"
+                "## Example 1: Requesting to use an MCP tool\n"
+                "\n"
+                "<use_mcp_tool>\n"
+                "<server_name>weather-server</server_name>\n"
+                "<tool_name>get_forecast</tool_name>\n"
+                "<arguments>\n"
+                "{{\n"
+                "  \"city\": \"San Francisco\",\n"
+                "  \"days\": 5\n"
+                "}}\n"
+                "</arguments>\n"
+                "</use_mcp_tool>\n"
+                "\n"
+                "## Example 2: Requesting to access an MCP resource\n"
+                "\n"
+                "<access_mcp_resource>\n"
+                "<server_name>weather-server</server_name>\n"
+                "<uri>weather://san-francisco/current</uri>\n"
+                "</access_mcp_resource>\n"
+                "\n"
+                "\n"
+                "====\n"
+                "\n"
+                "MCP SERVERS\n"
+                "\n"
+                "The Model Context Protocol (MCP) enables communication between the system and locally running MCP servers that provide additional tools and resources to extend your capabilities.\n"
+                "\n"
+                "CRITICAL: MCP TOOL RULES: All MCP tool usage MUST strictly follow the Output Structure rules defined for `use_mcp_tool`. The output will always be returned within <use_mcp_tool> tags with the specified structured format.\n"
+                "IMPORTANT: This tool usage process will be repeated multiple times throughout task completion. Each and every MCP tool call MUST follow the Output Structure rules without exception. The structured format must be applied consistently across all iterations to ensure proper parsing and execution.\n"
+                "\n"
+                "# Connected MCP Servers\n"
+                "\n"
+                "When a server is connected, you can use the server's tools via the `use_mcp_tool` tool, and access the server's resources via the `access_mcp_resource` tool.\n"
+                "\n"
+                "\n"
+                "{mcp_tools}\n"
+                "\n"
+                "\n"
+                "====\n"
+                "\n"
+                "\n"
+                "# Choosing the Appropriate Tool\n"
+                "\n"
+                "None\n"
+                "\n"
+                "\n"
+                "====\n"
+                "# Auto-formatting Considerations\n"
+                " \n"
+                "None\n"
+                "\n"
+                "\n"
+                "====\n"
+                "# Workflow Tips\n"
+                "\n"
+                "None\n"
+                "\n"
+                "\n"
+                "====\n"
+                " \n"
+                "CAPABILITIES\n"
+                "\n"
+                "- You have access to tools that\n" 
+                "\n"
+                "- You have access to MCP servers that may provide additional tools and resources. Each server may provide different capabilities that you can use to accomplish tasks more effectively.\n"
+                "\n"
+                "\n"
+                "====\n"
+                "\n"
+                "RULES\n"
+                "\n"
+                "CRITICAL: Always adhere to this format for the tool use to ensure proper parsing and execution. Before completing the user's final task, all intermediate tool usage processes must maintain proper parsing and execution. Each tool call must be correctly formatted and executed according to the specified XML structure to ensure successful task completion.\n"
+                "CRITICAL: MCP TOOL RULES: 1. All MCP tool output must be enclosed within <use_mcp_tool> opening and closing tags without exception.\n"
+                "CRITICAL: MCP TOOL RULES: 2. The structured response format must be strictly followed for proper parsing and execution.\n"
+                "CRITICAL: MCP TOOL RULES: 3. Before completing user's final task, all intermediate MCP tool processes must maintain proper parsing and execution.\n"
+                "CRITICAL: THINKING RULES: In <thinking> tags, assess what information you already have and what information you need to proceed with the task. Include detailed output description text within <thinking> tags and always specify the `TOOL USE` next action to take.\n"
+                "CRITICAL: PARAMETER RULES: 1. ALL parameters marked as (required) MUST be provided with actual content - empty or null values are strictly forbidden.\n"
+                "CRITICAL: PARAMETER RULES: 2. The 'uri' parameter MUST contain a valid resource URI string.\n"
+                "CRITICAL: PARAMETER RULES: 3. Missing parameters or empty parameter values will cause resource access to fail.\n" 
+                "CRITICAL: PARAMETER RULES: 4. ALL parameters marked as (required) MUST be provided with actual content - empty or null values are strictly forbidden.\n"
+                "CRITICAL: PARAMETER RULES: 5. The 'arguments' parameter MUST contain a valid JSON object with appropriate parameter values for the specified tool.\n"
+                "CRITICAL: PARAMETER RULES: 6. Missing parameters or empty parameter values will cause tool execution to fail.\n"
+                "CRITICAL: Tool Use RULES: 1. If multiple actions are needed, use one tool at a time per message to accomplish the task iteratively, with each tool use being informed by the result of the previous tool use. Do not assume the outcome of any tool use. Each step must be informed by the previous step's result.\n"
+                "CRITICAL: Tool Use RULES: 2. Formulate your tool use using the XML format specified for each tool. by example `TOOL USE`\n"
+                "Your current working directory is: {current_working_directory}\n"
+                "You are STRICTLY FORBIDDEN from starting your messages with \"Great\", \"Certainly\", \"Okay\", \"Sure\". You should NOT be conversational in your responses, but rather direct and to the point. For example you should NOT say \"Great, I've find's the Chunk\" but instead something like \"I've find's the Chunk\". It is important you be clear and technical in your messages.\n"
+                "When presented with images, utilize your vision capabilities to thoroughly examine them and extract meaningful information. Incorporate these insights into your thought process as you accomplish the user's task.\n"
+                "At the end of each user message, you will automatically receive environment_details. This information is not written by the user themselves, but is auto-generated to provide potentially relevant context about the project structure and environment. While this information can be valuable for understanding the project context, do not treat it as a direct part of the user's request or response. Use it to inform your actions and decisions, but don't assume the user is explicitly asking about or referring to this information unless they clearly do so in their message. When using environment_details, explain your actions clearly to ensure the user understands, as they may not be aware of these details.\n"
+                "MCP operations should be used one at a time, similar to other tool usage. Wait for confirmation of success before proceeding with additional operations.\n"
+               
+                "\n"
+                "\n"
+                "====\n"
+                "\n"
+                "SYSTEM INFORMATION\n"
+                "\n"
+                "None\n"
+                "\n"
+                "====\n"
+                "\n"
+                "OBJECTIVE\n"
+                "\n"
+                "You accomplish a given task iteratively, breaking it down into clear steps and working through them methodically.\n"
+                "\n"
+                "1. Analyze the user's task and set clear, achievable goals to accomplish it. Prioritize these goals in a logical order.\n"
+                "2. Work through these goals sequentially, utilizing available tools one at a time as necessary. Each goal should correspond to a distinct step in your problem-solving process. You will be informed on the work completed and what's remaining as you go.\n"
+                "3. Remember, you have extensive capabilities with access to a wide range of tools that can be used in powerful and clever ways as necessary to accomplish each goal. Before calling a tool, do some analysis within <thinking></thinking> tags. First, analyze the file structure provided in environment_details to gain context and insights for proceeding effectively. Then, think about which of the provided tools is the most relevant tool to accomplish the user's task.\n"
+                "4. The user may provide feedback, which you can use to make improvements and try again. But DO NOT continue in pointless back and forth conversations, i.e. don't end your responses with questions or offers for further assistance.\n"
+            ),
+            "HUMAN_MESSAGE": (
+                "{input}\n\n" 
+                "<environment_details>\n"
+                "# Current Time\n"
+                "{datetime}\n"
+                "</environment_details>\n"
+            )
+        },
     }
     """Agent 模板"""
 
@@ -826,6 +972,7 @@ class SettingsContainer:
 
 
 Settings = SettingsContainer()
+nltk.data.path.append(str(Settings.basic_settings.NLTK_DATA_PATH))
 
 
 if __name__ == "__main__":
