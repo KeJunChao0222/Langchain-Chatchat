@@ -678,6 +678,153 @@ class ApiRequest:
             resp, as_json=True, value_func=lambda r: r.get("data")
         )
 
+    # ==================== 知识图谱相关API ====================
+
+    def get_graph_stats(self, kb_name: str) -> Dict:
+        """获取图谱统计信息"""
+        resp = self.get(f"/knowledge_graph/get_stats", params={"kb_name": kb_name})
+        return self._get_response_value(resp, as_json=True)
+
+    def list_graph_nodes(
+        self, kb_name: str, node_type: str = None, limit: int = 100
+    ) -> Dict:
+        """列出图谱节点"""
+        params = {"kb_name": kb_name, "limit": limit}
+        if node_type:
+            params["node_type"] = node_type
+        resp = self.get("/knowledge_graph/list_nodes", params=params)
+        return self._get_response_value(resp, as_json=True)
+
+    def list_graph_edges(
+        self,
+        kb_name: str,
+        node_id: str = None,
+        relation_type: str = None,
+        limit: int = 100,
+    ) -> Dict:
+        """列出图谱边"""
+        params = {"kb_name": kb_name, "limit": limit}
+        if node_id:
+            params["node_id"] = node_id
+        if relation_type:
+            params["relation_type"] = relation_type
+        resp = self.get("/knowledge_graph/list_edges", params=params)
+        return self._get_response_value(resp, as_json=True)
+
+    def create_graph_node(
+        self,
+        kb_name: str,
+        node_id: str,
+        node_name: str,
+        node_type: str = None,
+        properties: Dict = None,
+    ) -> Dict:
+        """创建图谱节点"""
+        data = {
+            "kb_name": kb_name,
+            "node_id": node_id,
+            "node_name": node_name,
+            "node_type": node_type,
+            "properties": properties,
+        }
+        resp = self.post("/knowledge_graph/create_node", json=data)
+        return self._get_response_value(resp, as_json=True)
+
+    def create_graph_edge(
+        self,
+        kb_name: str,
+        source_node_id: str,
+        target_node_id: str,
+        relation_type: str = None,
+        properties: Dict = None,
+        weight: float = 1.0,
+    ) -> Dict:
+        """创建图谱边"""
+        data = {
+            "kb_name": kb_name,
+            "source_node_id": source_node_id,
+            "target_node_id": target_node_id,
+            "relation_type": relation_type,
+            "properties": properties,
+            "weight": weight,
+        }
+        resp = self.post("/knowledge_graph/create_edge", json=data)
+        return self._get_response_value(resp, as_json=True)
+
+    def delete_graph_node(self, kb_name: str, node_id: str) -> Dict:
+        """删除图谱节点"""
+        data = {"kb_name": kb_name, "node_id": node_id}
+        resp = self.post("/knowledge_graph/delete_node", json=data)
+        return self._get_response_value(resp, as_json=True)
+
+    def delete_graph_edge(self, kb_name: str, edge_id: str) -> Dict:
+        """删除图谱边"""
+        data = {"kb_name": kb_name, "edge_id": edge_id}
+        resp = self.post("/knowledge_graph/delete_edge", json=data)
+        return self._get_response_value(resp, as_json=True)
+
+    def search_graph_nodes(
+        self, kb_name: str, keyword: str, limit: int = 50
+    ) -> Dict:
+        """搜索图谱节点"""
+        data = {"kb_name": kb_name, "keyword": keyword, "limit": limit}
+        resp = self.post("/knowledge_graph/search_nodes", json=data)
+        return self._get_response_value(resp, as_json=True)
+
+    def get_node_neighbors(
+        self, kb_name: str, node_id: str, direction: str = "both", max_depth: int = 1
+    ) -> Dict:
+        """获取节点邻居"""
+        params = {
+            "kb_name": kb_name,
+            "node_id": node_id,
+            "direction": direction,
+            "max_depth": max_depth,
+        }
+        resp = self.get("/knowledge_graph/get_neighbors", params=params)
+        return self._get_response_value(resp, as_json=True)
+
+    def batch_create_graph_nodes(self, kb_name: str, nodes: List[Dict]) -> Dict:
+        """批量创建节点"""
+        data = {"kb_name": kb_name, "nodes": nodes}
+        resp = self.post("/knowledge_graph/batch_create_nodes", json=data)
+        return self._get_response_value(resp, as_json=True)
+
+    def batch_create_graph_edges(self, kb_name: str, edges: List[Dict]) -> Dict:
+        """批量创建边"""
+        data = {"kb_name": kb_name, "edges": edges}
+        resp = self.post("/knowledge_graph/batch_create_edges", json=data)
+        return self._get_response_value(resp, as_json=True)
+
+    def export_knowledge_graph(self, kb_name: str) -> Dict:
+        """导出知识图谱"""
+        resp = self.get("/knowledge_graph/export_graph", params={"kb_name": kb_name})
+        return self._get_response_value(resp, as_json=True)
+
+    def import_knowledge_graph(
+        self, kb_name: str, graph_data: Dict, clear_existing: bool = False
+    ) -> Dict:
+        """导入知识图谱"""
+        data = {
+            "kb_name": kb_name,
+            "graph_data": graph_data,
+            "clear_existing": clear_existing,
+        }
+        resp = self.post("/knowledge_graph/import_graph", json=data)
+        return self._get_response_value(resp, as_json=True)
+
+    def clear_knowledge_graph(self, kb_name: str) -> Dict:
+        """清空知识图谱"""
+        data = {"kb_name": kb_name}
+        resp = self.post("/knowledge_graph/clear_graph", json=data)
+        return self._get_response_value(resp, as_json=True)
+
+    def simple_graph_query(self, kb_name: str, query: str, top_k: int = 10) -> Dict:
+        """简单图谱查询（不使用LLM）"""
+        data = {"kb_name": kb_name, "query": query, "top_k": top_k}
+        resp = self.post("/knowledge_graph/query", json=data)
+        return self._get_response_value(resp, as_json=True)
+
 
 class AsyncApiRequest(ApiRequest):
     def __init__(

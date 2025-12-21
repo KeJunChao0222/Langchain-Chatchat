@@ -7,6 +7,10 @@ from dateutil.parser import parse
 from chatchat.settings import Settings
 from chatchat.server.db.base import Base, engine
 from chatchat.server.db.models.conversation_model import ConversationModel
+from chatchat.server.db.models.knowledge_graph_model import (
+    KnowledgeGraphEdgeModel,
+    KnowledgeGraphNodeModel,
+)
 from chatchat.server.db.models.message_model import MessageModel
 from chatchat.server.db.repository.knowledge_file_repository import (
     add_file_to_db,
