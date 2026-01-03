@@ -779,6 +779,18 @@ def show_graph_chat(api: ApiRequest, kb_name: str):
 
     st.info("基于知识图谱的智能问答，LLM会自动从图谱中提取相关信息作为上下文")
 
+    # 对话模式选择
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        chat_mode = st.radio(
+            "对话模式",
+            ["智能对话 (LLM)", "简单查询"],
+            horizontal=True,
+            help="智能对话：使用LLM基于图谱上下文生成回答；简单查询：直接返回匹配的节点和关系"
+        )
+    with col2:
+        use_kb = st.checkbox("同时使用知识库", value=True, help="勾选后将同时检索知识库文档作为上下文")
+
     # 初始化对话历史
     if "kg_chat_history" not in st.session_state:
         st.session_state.kg_chat_history = []
@@ -801,43 +813,95 @@ def show_graph_chat(api: ApiRequest, kb_name: str):
         # 调用API
         with st.chat_message("assistant"):
             with st.spinner("思考中..."):
-                # 简单查询（不使用LLM）
-                result = api.simple_graph_query(kb_name, user_input, top_k=10)
-
-                if result.get("code") == 200:
-                    data = result.get("data", {})
-                    nodes = data.get("nodes", [])
-                    edges = data.get("edges", [])
-
-                    if nodes or edges:
-                        response = f"找到 {len(nodes)} 个相关节点和 {len(edges)} 条相关关系:\n\n"
-
-                        if nodes:
-                            response += "**相关实体:**\n"
-                            for node in nodes[:5]:
-                                response += f"- {node['node_name']} ({node.get('node_type', 'N/A')})\n"
-
-                        if edges:
-                            response += "\n**相关关系:**\n"
-                            for edge in edges[:5]:
-                                response += f"- {edge['source_node_id']} → [{edge.get('relation_type', 'N/A')}] → {edge['target_node_id']}\n"
-
-                        st.write(response)
-                        st.session_state.kg_chat_history.append(
-                            {"role": "assistant", "content": response}
-                        )
-
-                        # 显示详细数据
-                        with st.expander("查看详细数据"):
-                            st.json(data)
-                    else:
-                        response = "未找到相关的图谱信息"
-                        st.write(response)
-                        st.session_state.kg_chat_history.append(
-                            {"role": "assistant", "content": response}
-                        )
+                if chat_mode == "智能对话 (LLM)":
+                    # 使用增强型对话（知识图谱+知识库+LLM）
+                    try:
+                        # 构建历史对话
+                        history = [
+                            {"role": msg["role"], "content": msg["content"]}
+                            for msg in st.session_state.kg_chat_history[:-1]  # 排除刚添加的用户消息
+                        ]
+                        
+                        response_text = ""
+                        docs_info = []
+                        
+                        # 调用增强型对话API
+                        for chunk in api.enhanced_kg_chat(
+                            kb_name=kb_name,
+                            query=user_input,
+                            use_kg=True,
+                            use_kb=use_kb,
+                            kg_top_k=10,
+                            kb_top_k=5,
+                            history=history,
+                            stream=True,
+                        ):
+                            if isinstance(chunk, dict):
+                                # 处理文档来源信息
+                                if chunk.get("docs"):
+                                    docs_info = chunk.get("docs", [])
+                                # 处理回答内容
+                                if "choices" in chunk:
+                                    for choice in chunk["choices"]:
+                                        if "delta" in choice and "content" in choice["delta"]:
+                                            response_text += choice["delta"]["content"]
+                                        elif "message" in choice and "content" in choice["message"]:
+                                            response_text += choice["message"]["content"]
+                        
+                        if response_text:
+                            st.write(response_text)
+                            st.session_state.kg_chat_history.append(
+                                {"role": "assistant", "content": response_text}
+                            )
+                            
+                            # 显示来源信息
+                            if docs_info:
+                                with st.expander("📚 参考来源"):
+                                    for doc in docs_info[:5]:
+                                        st.markdown(f"- {doc[:200]}..." if len(str(doc)) > 200 else f"- {doc}")
+                        else:
+                            st.warning("未能生成回答，请稍后重试")
+                            
+                    except Exception as e:
+                        st.error(f"对话失败: {str(e)}")
                 else:
-                    st.error(f"查询失败: {result.get('msg')}")
+                    # 简单查询（不使用LLM）
+                    result = api.simple_graph_query(kb_name, user_input, top_k=10)
+
+                    if result.get("code") == 200:
+                        data = result.get("data", {})
+                        nodes = data.get("nodes", [])
+                        edges = data.get("edges", [])
+
+                        if nodes or edges:
+                            response = f"找到 {len(nodes)} 个相关节点和 {len(edges)} 条相关关系:\n\n"
+
+                            if nodes:
+                                response += "**相关实体:**\n"
+                                for node in nodes[:5]:
+                                    response += f"- {node['node_name']} ({node.get('node_type', 'N/A')})\n"
+
+                            if edges:
+                                response += "\n**相关关系:**\n"
+                                for edge in edges[:5]:
+                                    response += f"- {edge['source_node_id']} → [{edge.get('relation_type', 'N/A')}] → {edge['target_node_id']}\n"
+
+                            st.write(response)
+                            st.session_state.kg_chat_history.append(
+                                {"role": "assistant", "content": response}
+                            )
+
+                            # 显示详细数据
+                            with st.expander("查看详细数据"):
+                                st.json(data)
+                        else:
+                            response = "未找到相关的图谱信息，请尝试使用'智能对话'模式或更换关键词"
+                            st.write(response)
+                            st.session_state.kg_chat_history.append(
+                                {"role": "assistant", "content": response}
+                            )
+                    else:
+                        st.error(f"查询失败: {result.get('msg')}")
 
     # 清空对话
     if st.button("🗑️ 清空对话历史"):

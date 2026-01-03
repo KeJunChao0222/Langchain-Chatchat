@@ -88,7 +88,8 @@ def create_models_chains(
         history.append({"role": "user", "content": message["query"]}) 
         history.append({"role": "assistant", "content":  message["response"]})  
 
-    intermediate_steps = loads(messages[-1].get("metadata", {}).get("intermediate_steps"), valid_namespaces=["langchain_chatchat", "agent_toolkits", "all_tools", "tool"] )  if len(messages)>0 and messages[-1].get("metadata") is not None else []
+    metadata = messages[-1].get("metadata") or {} if len(messages) > 0 else {}
+    intermediate_steps = loads(metadata.get("intermediate_steps"), valid_namespaces=["langchain_chatchat", "agent_toolkits", "all_tools", "tool"]) if metadata.get("intermediate_steps") else []
     llm = models["action_model"]
     llm.callbacks = callbacks
     connections = get_enabled_mcp_connections()
@@ -96,13 +97,14 @@ def create_models_chains(
     # 转换为MCP连接格式，支持StdioConnection和SSEConnection类型
     mcp_connections = {}
     for conn in connections:
+        config = conn.get("config") or {}
         if conn["transport"] == "stdio":
             # StdioConnection类型
             mcp_connections[conn["server_name"]] = {
                 "transport": "stdio",
-                "command": conn["config"].get("command", conn["args"][0] if conn["args"] else ""),
-                "args": conn["args"][1:] if len(conn["args"]) > 1 else [],
-                "env": conn["env"],
+                "command": config.get("command", conn["args"][0] if conn.get("args") else ""),
+                "args": conn["args"][1:] if conn.get("args") and len(conn["args"]) > 1 else [],
+                "env": conn.get("env") or {},
                 "encoding": "utf-8",
                 "encoding_error_handler": "strict"
             }
@@ -110,8 +112,8 @@ def create_models_chains(
             # SSEConnection类型
             mcp_connections[conn["server_name"]] = {
                 "transport": "sse",
-                "url": conn["config"].get("url", ""),
-                "headers": conn["config"].get("headers", {}),
+                "url": config.get("url", ""),
+                "headers": config.get("headers", {}),
                 "timeout": conn.get("timeout", 30.0),
                 "sse_read_timeout": conn.get("sse_read_timeout", 60.0)
             }
@@ -260,13 +262,15 @@ async def chat(
 
                     data["text"] = item.text
 
+                llm_model = models.get("llm_model")
+                model_name = llm_model.model_name if llm_model and hasattr(llm_model, 'model_name') else "unknown"
                 ret = OpenAIChatOutput(
                     id=f"chat{uuid.uuid4()}",
                     object="chat.completion.chunk",
                     content=data.get("text", ""),
                     role="assistant",
                     tool_calls=data["tool_calls"],
-                    model=models["llm_model"].model_name,
+                    model=model_name,
                     status=data["status"],
                     message_type=data["message_type"],
                     message_id=message_id,
@@ -276,9 +280,13 @@ async def chat(
 
             string_intermediate_steps = dumps(agent_executor.intermediate_steps, pretty=True)
 
+            # 安全获取历史记录中的最后一条内容
+            last_history = agent_executor.history[-1] if agent_executor.history else None
+            last_content = last_history.get("content") if last_history and isinstance(last_history, dict) else ""
+            
             update_message(
                 message_id, 
-                agent_executor.history[-1].get("content"),
+                last_content,
                 metadata = {
                     "intermediate_steps": string_intermediate_steps
                 }
@@ -288,7 +296,8 @@ async def chat(
             logger.warning("streaming progress has been interrupted by user.")
             return
         except Exception as e:
-            logger.error(f"error in chat: {e}")
+            import traceback
+            logger.error(f"error in chat: {e}\n{traceback.format_exc()}")
             yield {"data": json.dumps({"error": str(e)})}
             return
 

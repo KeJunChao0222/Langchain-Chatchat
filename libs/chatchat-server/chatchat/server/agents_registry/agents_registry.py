@@ -199,6 +199,10 @@ def agents_registry(
     elif "platform-knowledge-mode" == agent_type:
   
         template = get_prompt_template_dict("action_model", agent_type)
+        # 如果配置文件中没有模板，使用默认模板
+        if template is None:
+            from chatchat.settings import Settings
+            template = Settings.prompt_settings.model_fields["action_model"].default.get(agent_type, {})
         prompt = create_prompt_platform_knowledge_mode_template(agent_type, template=template)
         agent = create_platform_knowledge_agent(llm=llm,
                                                 current_working_directory=kwargs.get("current_working_directory", "/tmp"),

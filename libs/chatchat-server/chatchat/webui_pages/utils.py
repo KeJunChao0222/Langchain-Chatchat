@@ -846,6 +846,62 @@ class ApiRequest:
         resp = self.post("/knowledge_graph/query", json=data)
         return self._get_response_value(resp, as_json=True)
 
+    def kg_chat(
+        self,
+        kb_name: str,
+        query: str,
+        top_k: int = 10,
+        history: List[Dict] = None,
+        stream: bool = False,
+        model: str = None,
+        temperature: float = 0.7,
+    ):
+        """知识图谱对话（使用LLM）"""
+        data = {
+            "kb_name": kb_name,
+            "query": query,
+            "top_k": top_k,
+            "history": history or [],
+            "stream": stream,
+            "temperature": temperature,
+        }
+        if model:
+            data["model"] = model
+        resp = self.post("/knowledge_graph/chat", json=data, stream=stream)
+        return self._httpx_stream2generator(resp, as_json=True)
+
+    def enhanced_kg_chat(
+        self,
+        kb_name: str,
+        query: str,
+        use_kg: bool = True,
+        use_kb: bool = True,
+        kg_top_k: int = 10,
+        kb_top_k: int = 5,
+        score_threshold: float = 0.5,
+        history: List[Dict] = None,
+        stream: bool = False,
+        model: str = None,
+        temperature: float = 0.7,
+    ):
+        """增强型知识对话（知识图谱+知识库+LLM）"""
+        data = {
+            "kb_name": kb_name,
+            "query": query,
+            "use_kg": use_kg,
+            "use_kb": use_kb,
+            "kg_top_k": kg_top_k,
+            "kb_top_k": kb_top_k,
+            "score_threshold": score_threshold,
+            "history": history or [],
+            "stream": stream,
+            "temperature": temperature,
+        }
+        if model:
+            data["model"] = model
+        resp = self.post("/chat/enhanced_kg_chat", json=data, stream=stream)
+        return self._httpx_stream2generator(resp, as_json=True)
+
     # MCP Profile Methods
     def get_mcp_profile(self, **kwargs) -> Dict:
         """

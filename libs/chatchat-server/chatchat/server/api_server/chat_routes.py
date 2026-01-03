@@ -10,6 +10,7 @@ from chatchat.server.api_server.api_schemas import OpenAIChatInput
 from chatchat.server.chat.chat import chat
 from chatchat.server.chat.kb_chat import kb_chat
 from chatchat.server.chat.feedback import chat_feedback
+from chatchat.server.chat.enhanced_kg_chat import enhanced_kg_chat, get_combined_context
 from chatchat.server.chat.file_chat import file_chat
 from chatchat.server.db.repository import add_message_to_db
 from chatchat.server.utils import (
@@ -40,6 +41,8 @@ chat_router.post(
 
 chat_router.post("/kb_chat", summary="知识库对话")(kb_chat)
 chat_router.post("/file_chat", summary="文件对话")(file_chat)
+chat_router.post("/enhanced_kg_chat", summary="增强型知识对话（知识图谱+知识库）")(enhanced_kg_chat)
+chat_router.post("/get_combined_context", summary="获取组合上下文（知识图谱+知识库）")(get_combined_context)
 
 
 @chat_router.post("/chat/completions", summary="兼容 openai 的统一 chat 接口")

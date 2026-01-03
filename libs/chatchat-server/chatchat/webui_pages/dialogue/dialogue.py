@@ -222,7 +222,7 @@ def dialogue_page(
                 )
             else:
                 # selected_tool = sac.buttons(list(tools), format_func=lambda x: tools[x]["title"], label="选择工具",
-             
+                use_mcp = False
                 selected_tools = []
             selected_tool_configs = {
                 name: tool["config"]
